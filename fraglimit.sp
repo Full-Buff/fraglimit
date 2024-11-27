@@ -49,8 +49,16 @@ int gTeamFrags[TFTeam_Blue + 1]; // Indices 0 to 3
 
 public void OnPluginStart()
 {
-    // Create the mp_fraglimit ConVar
-    gCvarFragLimit = CreateConVar("mp_fraglimit", "5", "Frag limit for the server", 0, true, 1.0);
+    // Create the mp_fraglimit ConVar https://wiki.alliedmods.net/ConVars_(SourceMod_Scripting)
+    gCvarFragLimit = CreateConVar(
+    					"dm_fraglimit", 
+    					"5", 
+    					"Frag limit for the server", 
+    					_, 
+    					false, 
+    					0, 
+    					true, 
+    					99);
 
     // Hook the player_death event
     HookEvent("player_death", OnPlayerDeathEvent, EventHookMode_Post);
