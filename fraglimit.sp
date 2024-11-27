@@ -58,7 +58,7 @@ public void OnPluginStart()
     					false, 
     					0, 
     					true, 
-    					99);
+    					1000); // Does this have some upper limit?? We will see. Maybe capped by a buffer size.
 
     // Hook the player_death event
     HookEvent("player_death", OnPlayerDeathEvent, EventHookMode_Post);
