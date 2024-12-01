@@ -1,5 +1,4 @@
  // FragLimit.sp
-
 #pragma semicolon 1
 #pragma newdecls required
 #include <sourcemod>
@@ -34,152 +33,169 @@ enum TFWinReason
 	TFWinReason_PasstimeOvertime
 };
 
-
 public Plugin myinfo =  {
 	name = "FragLimit", 
-	author = "Fuko", 
-	description = "Adds mp_fraglimit functionality to current gamemode.", 
+	author = "Fuko.dev", 
+	description = "Extends mp_fraglimit functionality to all game modes.", 
 	version = "1.0", 
 	url = ""
 };
 
-Handle gCvarFragLimit;
-int gPlayerFrags[MAXPLAYERS + 1];
-int gTeamFrags[TFTeam_Blue + 1]; // Indices 0 to 3
+ConVar g_CvarFragLimit;
+int g_PlayerFrags[MAXPLAYERS + 1];
+int g_TeamFrags[4];
+bool g_PluginEnabled;
 
 public void OnPluginStart()
 {
-	// Create the mp_fraglimit ConVar https://wiki.alliedmods.net/ConVars_(SourceMod_Scripting)
-	gCvarFragLimit = FindConVar("mp_fraglimit");
+	// Get the existing mp_fraglimit ConVar
+	g_CvarFragLimit = FindConVar("mp_fraglimit");
+	if (g_CvarFragLimit == null)
+	{
+		SetFailState("Failed to find mp_fraglimit ConVar!");
+	}
 	
-	// Hook the player_death event
-	HookEvent("player_death", OnPlayerDeathEvent); // Defaulting to 'Post' mode
+	HookEvent("player_death", OnPlayerDeathEvent);
+	HookEvent("teamplay_round_start", OnRoundStart);
+	HookEvent("teamplay_game_over", OnGameEnd);
 	
-	// Reset team frags
-	ResetTeamFrags();
+	RegAdminCmd("sm_fragstatus", Command_FragStatus, ADMFLAG_GENERIC, "Shows current frag counts");
 }
 
 public void OnMapStart()
 {
-	// Reset frags at the start of the map
-	ResetPlayerFrags();
-	ResetTeamFrags();
+	ResetScores();
+	g_PluginEnabled = true;
 }
 
-public void OnClientPutInServer(int client)
+public void OnMapEnd()
 {
-	// Initialize player frags when they join
-	gPlayerFrags[client] = 0;
+	g_PluginEnabled = false;
 }
 
-public void OnClientDisconnect(int client)
+public Action Command_FragStatus(int client, int args)
 {
-	// Reset frags when a player disconnects
-	gPlayerFrags[client] = 0;
+	if (!g_PluginEnabled)return Plugin_Handled;
+	
+	ReplyToCommand(client, "[FragLimit] Current team scores:");
+	ReplyToCommand(client, "Red Team: %d", g_TeamFrags[TFTeam_Red]);
+	ReplyToCommand(client, "Blue Team: %d", g_TeamFrags[TFTeam_Blue]);
+	ReplyToCommand(client, "Frag Limit: %d", g_CvarFragLimit.IntValue);
+	
+	return Plugin_Handled;
+}
+
+public void OnRoundStart(Event event, const char[] name, bool dontBroadcast)
+{
+	ResetScores();
+}
+
+public void OnGameEnd(Event event, const char[] name, bool dontBroadcast)
+{
+	g_PluginEnabled = false;
 }
 
 public void OnPlayerDeathEvent(Event event, const char[] name, bool dontBroadcast)
 {
+	if (!g_PluginEnabled)return;
+	
 	int victim = GetClientOfUserId(GetEventInt(event, "userid"));
 	int attacker = GetClientOfUserId(GetEventInt(event, "attacker"));
+	bool isSuicide = (victim == attacker || attacker == 0);
 	
-	// Check if the attacker is valid and not the same as the victim
-	if (attacker > 0 && attacker != victim && IsClientInGame(attacker))
+	// Need to test the below further before first launch. Not sure if it will give a kill count to 
+	// whoever gets the kill credit when someone suicides by rocket damage or something else. 
+	// It should, otherwise thatd be a way people can deny kills for the other team, as well as a way
+	// they can get a health/ammo reset for free.
+	
+	// Only process valid kills (not suicides or world damage)
+	if (!isSuicide && IsValidClient(attacker))
 	{
-		gPlayerFrags[attacker]++;
 		int attackerTeam = GetClientTeam(attacker);
 		
-		// Increment team frags
-		gTeamFrags[attackerTeam]++;
+		// Increment scores
+		g_PlayerFrags[attacker]++;
+		g_TeamFrags[attackerTeam]++;
 		
-		int fragLimit = GetConVarInt(gCvarFragLimit);
+		int fragLimit = GetConVarInt(g_CvarFragLimit);
 		
-		// Check if the team has reached the frag limit
-		if (gTeamFrags[attackerTeam] >= fragLimit)
+		// Check if team reached the limit
+		if (g_TeamFrags[attackerTeam] >= fragLimit)
 		{
-			char sTeamName[32];
-			GetCustomTeamName(attackerTeam, sTeamName, sizeof(sTeamName));
-			PrintToChatAll("\x04[FragLimit]\x01 Team %s has reached the frag limit!", sTeamName);
+			char teamName[32];
+			GetTeamName(attackerTeam, teamName, sizeof(teamName));
 			
-			// End the round and declare the winner using the SZF method
+			PrintToChatAll("\x04[FragLimit]\x01 %s team has won with %d frags!", 
+				teamName, g_TeamFrags[attackerTeam]);
+			
 			EndRound(attackerTeam);
-			
-			// Reset frags for the next round
-			ResetPlayerFrags();
-			ResetTeamFrags();
+		}
+		// Notify when teams are close to winning
+		else if (g_TeamFrags[attackerTeam] == fragLimit - 5)
+		{
+			PrintToChatAll("\x04[FragLimit]\x01 %s team needs 5 more frags to win!", 
+				attackerTeam == TFTeam_Red ? "Red" : "Blue");
 		}
 	}
 }
 
-public void ResetPlayerFrags()
+void ResetScores()
 {
-	// Reset all player frags
 	for (int i = 1; i <= MaxClients; i++)
 	{
-		if (IsClientInGame(i))
-		{
-			gPlayerFrags[i] = 0;
-		}
+		g_PlayerFrags[i] = 0;
 	}
-}
-
-public void ResetTeamFrags()
-{
-	// Reset team frags
-	gTeamFrags[TFTeam_Red] = 0;
-	gTeamFrags[TFTeam_Blue] = 0;
-	gTeamFrags[TFTeam_Unassigned] = 0;
-}
-
-public void GetCustomTeamName(int team, char[] name, int maxlen)
-{
-	// Define arrays of team IDs and team names
-	int teamIDs[] =  { TFTeam_Red, TFTeam_Blue };
-	char teamNames[][] =  {
-		"Red", 
-		"Blue"
-	};
 	
-	// Get the number of teams in the array
-	int numTeams = sizeof(teamIDs);
-	
-	// Loop through the team IDs to find a match
-	for (int i = 0; i < numTeams; i++)
+	for (int i = 0; i < sizeof(g_TeamFrags); i++)
 	{
-		if (team == teamIDs[i])
-		{
-			strcopy(name, maxlen, teamNames[i]);
-			return;
-		}
+		g_TeamFrags[i] = 0;
+	}
+}
+
+void EndRound(int winningTeam)
+{
+	int gameRules = FindEntityByClassname(-1, "tf_gamerules");
+	if (gameRules == -1)return;
+	
+	// Set winning team and force round end
+	SetEntProp(gameRules, Prop_Send, "m_iWinningTeam", winningTeam);
+	
+	Event roundWin = CreateEvent("teamplay_round_win", true);
+	if (roundWin != null)
+	{
+		roundWin.SetInt("team", winningTeam);
+		roundWin.SetInt("winreason", view_as<int>(TFWinReason_PointLimit));
+		roundWin.SetBool("full_round", true);
+		roundWin.Fire();
 	}
 	
-	// If no match is found, set name to "Unknown"
-	strcopy(name, maxlen, "Unknown");
+	// Force round restart
+	CreateTimer(3.0, Timer_RestartRound);
 }
 
-
-public void EndRound(int winningTeam)
+public Action Timer_RestartRound(Handle timer)
 {
-	// Get the tf_gamerules entity
-	int gamerules = FindEntityByClassname(-1, "tf_gamerules");
-	if (gamerules != -1)
+	int gameRules = FindEntityByClassname(-1, "tf_gamerules");
+	if (gameRules != -1)
 	{
-		// Set the winning team
-		SetEntProp(gamerules, Prop_Send, "m_iWinningTeam", winningTeam);
-		
-		// Force map reset to end the round
-		SetEntProp(gamerules, Prop_Send, "m_bForceMapReset", 1);
-		
-		// Fire the teamplay_round_win event
-		Handle event = CreateEvent("teamplay_round_win");
-		if (event != INVALID_HANDLE)
-		{
-			SetEventInt(event, "team", winningTeam);
-			SetEventInt(event, "winreason", TFWinReason_TimeLimit); // Use a valid win reason
-			SetEventInt(event, "flagcaplimit", 0);
-			SetEventBool(event, "full_round", true);
-			SetEventInt(event, "round_time", 0);
-			FireEvent(event);
-		}
+		SetEntProp(gameRules, Prop_Send, "m_bInSetup", true);
+		CreateTimer(0.1, Timer_SetupEnd);
 	}
+	return Plugin_Stop;
 }
+
+public Action Timer_SetupEnd(Handle timer)
+{
+	int gameRules = FindEntityByClassname(-1, "tf_gamerules");
+	if (gameRules != -1)
+	{
+		SetEntProp(gameRules, Prop_Send, "m_bInSetup", false);
+	}
+	return Plugin_Stop;
+}
+
+bool IsValidClient(int client)
+{
+	return (client > 0 && client <= MaxClients && IsClientInGame(client) && 
+		!IsFakeClient(client) && GetClientTeam(client) > 1);
+} 
