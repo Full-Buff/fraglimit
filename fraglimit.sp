@@ -130,90 +130,90 @@ public void OnMapEnd()
 
 public Action Command_FragStatus(int client, int args)
 {
-    if (!g_PluginEnabled) return Plugin_Handled;
-    
-    ReplyToCommand(client, "[FragLimit] Current team scores:");
-    ReplyToCommand(client, "Red Team: %d", g_TeamFrags[TFTeam_Red]);
-    ReplyToCommand(client, "Blue Team: %d", g_TeamFrags[TFTeam_Blue]);
-    ReplyToCommand(client, "Frag Limit: %d", GetConVarInt(g_CvarFragLimit));
-    
-    return Plugin_Handled;
+	if (!g_PluginEnabled)return Plugin_Handled;
+	
+	ReplyToCommand(client, "[FragLimit] Current team scores:");
+	ReplyToCommand(client, "Red Team: %d", g_TeamFrags[TFTeam_Red]);
+	ReplyToCommand(client, "Blue Team: %d", g_TeamFrags[TFTeam_Blue]);
+	ReplyToCommand(client, "Frag Limit: %d", GetConVarInt(g_CvarFragLimit));
+	
+	return Plugin_Handled;
 }
 
 public void OnRoundStart(Event event, const char[] name, bool dontBroadcast)
 {
-    ResetScores();
+	ResetScores();
 }
 
 public void OnGameEnd(Event event, const char[] name, bool dontBroadcast)
 {
-    g_PluginEnabled = false;
+	g_PluginEnabled = false;
 }
 
 public void OnPlayerDeathEvent(Event event, const char[] name, bool dontBroadcast)
 {
-    if (!g_PluginEnabled) return;
-    
-    int victim = GetClientOfUserId(GetEventInt(event, "userid"));
-    int attacker = GetClientOfUserId(GetEventInt(event, "attacker"));
-    bool isSuicide = (victim == attacker || attacker == 0);
-    
-    // Only process valid kills (not suicides or world damage)
-    if (!isSuicide && IsValidClient(attacker))
-    {
-        int attackerTeam = GetClientTeam(attacker);
-        
-        // Increment scores
-        g_PlayerFrags[attacker]++;
-        g_TeamFrags[attackerTeam]++;
-        
-        int fragLimit = GetConVarInt(g_CvarFragLimit);
-        
-        // Check if team reached the limit
-        if (g_TeamFrags[attackerTeam] >= fragLimit)
-        {
-            char teamName[32];
-            GetCustomTeamName(attackerTeam, teamName, sizeof(teamName));
-            
-            PrintToChatAll("\x04[FragLimit]\x01 %s team has won with %d frags!", 
-                teamName, g_TeamFrags[attackerTeam]);
-                
-            EndRound(attackerTeam);
-        }
-        // Notify when teams are close to winning
-        else if (g_TeamFrags[attackerTeam] == fragLimit - 5)
-        {
-            PrintToChatAll("\x04[FragLimit]\x01 %s team needs 5 more frags to win!", 
-                attackerTeam == TFTeam_Red ? "Red" : "Blue");
-        }
-    }
+	if (!g_PluginEnabled)return;
+	
+	int victim = GetClientOfUserId(GetEventInt(event, "userid"));
+	int attacker = GetClientOfUserId(GetEventInt(event, "attacker"));
+	bool isSuicide = (victim == attacker || attacker == 0);
+	
+	// Only process valid kills (not suicides or world damage)
+	if (!isSuicide && IsValidClient(attacker))
+	{
+		int attackerTeam = GetClientTeam(attacker);
+		
+		// Increment scores
+		g_PlayerFrags[attacker]++;
+		g_TeamFrags[attackerTeam]++;
+		
+		int fragLimit = GetConVarInt(g_CvarFragLimit);
+		
+		// Check if team reached the limit
+		if (ValidateWinCondition(attackerTeam, fragLimit))
+		{
+			char teamName[32];
+			GetCustomTeamName(attackerTeam, teamName, sizeof(teamName));
+			
+			PrintToChatAll("\x04[FragLimit]\x01 %s team has won with %d frags!", 
+				teamName, g_TeamFrags[attackerTeam]);
+			
+			EndRound(attackerTeam);
+		}
+		// Notify when teams are close to winning
+		else if (g_TeamFrags[attackerTeam] == fragLimit - 5)
+		{
+			PrintToChatAll("\x04[FragLimit]\x01 %s team needs 5 more frags to win!", 
+				attackerTeam == TFTeam_Red ? "Red" : "Blue");
+		}
+	}
 }
 
 void ResetScores()
 {
-    for (int i = 1; i <= MaxClients; i++)
-    {
-        g_PlayerFrags[i] = 0;
-    }
-    
-    for (int i = 0; i < sizeof(g_TeamFrags); i++)
-    {
-        g_TeamFrags[i] = 0;
-    }
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		g_PlayerFrags[i] = 0;
+	}
+	
+	for (int i = 0; i < sizeof(g_TeamFrags); i++)
+	{
+		g_TeamFrags[i] = 0;
+	}
 }
 
 // Also need to add this if it's missing
 stock void GetCustomTeamName(int team, char[] name, int maxlen)
 {
-    switch (team)
-    {
-        case TFTeam_Red:
-            strcopy(name, maxlen, "Red");
-        case TFTeam_Blue:
-            strcopy(name, maxlen, "Blue");
-        default:
-            strcopy(name, maxlen, "Unknown");
-    }
+	switch (team)
+	{
+		case TFTeam_Red:
+		strcopy(name, maxlen, "RED");
+		case TFTeam_Blue:
+		strcopy(name, maxlen, "BLU");
+		default:
+		strcopy(name, maxlen, "Unknown");
+	}
 }
 
 public Action Timer_UpdateHUD(Handle timer)
@@ -232,157 +232,118 @@ void UpdateHUDForAllPlayers()
 	
 	float x = g_CvarHudX.FloatValue;
 	float y = g_CvarHudY.FloatValue;
-	int fragLimit = g_CvarFragLimit.IntValue;
-	bool shouldBlink = g_CvarHudBlinkOnClose.BoolValue;
+	int fragLimit = GetConVarInt(g_CvarFragLimit);
 	
-	// Get colors
-	int redColors[3], blueColors[3], titleColors[3];
-	for (int i = 0; i < 3; i++)
-	{
-		redColors[i] = GetConVarInt(g_CvarHudRedTeamColor[i]);
-		blueColors[i] = GetConVarInt(g_CvarHudBlueTeamColor[i]);
-		titleColors[i] = GetConVarInt(g_CvarHudTitleColor[i]);
-	}
+	// Get team scores
+	int redScore = g_TeamFrags[TFTeam_Red];
+	int bluScore = g_TeamFrags[TFTeam_Blue];
 	
-	// Check if teams are close to limit
-	bool redClose = (g_TeamFrags[TFTeam_Red] >= fragLimit - 5);
-	bool blueClose = (g_TeamFrags[TFTeam_Blue] >= fragLimit - 5);
+	// Show title
+	SetHudTextParams(x, y, 1.1, 255, 255, 255, 255); // White color for title
 	
-	// Calculate fade effect
-	float fadeIn = g_CvarHudFadeEnabled.BoolValue ? 0.1 : 0.0;
-	float fadeOut = g_CvarHudFadeEnabled.BoolValue ? 0.5 : 0.0;
+	// Format text with team-colored scores
+	char hudText[256];
+	Format(hudText, sizeof(hudText), 
+		"Frag Limit: %d\n\x07FF3D3DRED\x01 Team: %d\n\x074D7942BLU\x01 Team: %d", 
+		fragLimit, redScore, bluScore);
 	
 	for (int i = 1; i <= MaxClients; i++)
 	{
 		if (!IsValidClient(i))
 			continue;
 		
-		// Clear previous HUD
-		ClearSyncHud(i, g_HudSync);
-		
-		// Show title
-		SetHudTextParams(x, y, 1.1, titleColors[0], titleColors[1], titleColors[2], 255, 0, 0.0, fadeIn, fadeOut);
-		ShowSyncHudText(i, g_HudSync, "Frag Limit: %d", fragLimit);
-		
-		// Show Red team score with blinking if close
-		float redY = y + 0.025;
-		if (shouldBlink && redClose)
-		{
-			float time = GetGameTime();
-			if (RoundToFloor(time * 2.0) % 2 == 0)
-			{
-				SetHudTextParams(x, redY, 1.1, redColors[0], redColors[1], redColors[2], 255, 0, 0.0, fadeIn, fadeOut);
-				ShowSyncHudText(i, g_HudSync, "Red Team: %d", g_TeamFrags[TFTeam_Red]);
-			}
-		}
-		else
-		{
-			SetHudTextParams(x, redY, 1.1, redColors[0], redColors[1], redColors[2], 255, 0, 0.0, fadeIn, fadeOut);
-			ShowSyncHudText(i, g_HudSync, "Red Team: %d", g_TeamFrags[TFTeam_Red]);
-		}
-		
-		// Show Blue team score with blinking if close
-		float blueY = y + 0.05;
-		if (shouldBlink && blueClose)
-		{
-			float time = GetGameTime();
-			if (RoundToFloor(time * 2.0) % 2 == 0)
-			{
-				SetHudTextParams(x, blueY, 1.1, blueColors[0], blueColors[1], blueColors[2], 255, 0, 0.0, fadeIn, fadeOut);
-				ShowSyncHudText(i, g_HudSync, "Blue Team: %d", g_TeamFrags[TFTeam_Blue]);
-			}
-		}
-		else
-		{
-			SetHudTextParams(x, blueY, 1.1, blueColors[0], blueColors[1], blueColors[2], 255, 0, 0.0, fadeIn, fadeOut);
-			ShowSyncHudText(i, g_HudSync, "Blue Team: %d", g_TeamFrags[TFTeam_Blue]);
-		}
+		ShowSyncHudText(i, g_HudSync, hudText);
 	}
 }
 
+
 void DisplayTopPlayers()
 {
-    // Create arrays to store player info
-    int playerIds[MAXPLAYERS+1];
-    int playerScores[MAXPLAYERS+1];
-    int playerCount = 0;
-    
-    // Collect valid players and their scores
-    for (int i = 1; i <= MaxClients; i++)
-    {
-        if (IsValidClient(i))
-        {
-            playerIds[playerCount] = i;
-            playerScores[playerCount] = g_PlayerFrags[i];
-            playerCount++;
-        }
-    }
-    
-    // Simple bubble sort because trying to use ArrayList.Sort/CustomSort just doesnt compile '_'
-    for (int i = 0; i < playerCount - 1; i++)
-    {
-        for (int j = 0; j < playerCount - i - 1; j++)
-        {
-            if (playerScores[j] < playerScores[j + 1])
-            {
-                // Swap scores
-                int tempScore = playerScores[j];
-                playerScores[j] = playerScores[j + 1];
-                playerScores[j + 1] = tempScore;
-                
-                // Swap IDs
-                int tempId = playerIds[j];
-                playerIds[j] = playerIds[j + 1];
-                playerIds[j + 1] = tempId;
-            }
-        }
-    }
-    
-    PrintToChatAll("\x04[FragLimit]\x01 Top 5 Players this round:");
-    
-    int displayCount = playerCount > 5 ? 5 : playerCount;
-    for (int i = 0; i < displayCount; i++)
-    {
-        char playerName[64];
-        int playerId = playerIds[i];
-        GetClientName(playerId, playerName, sizeof(playerName));
-        
-        int team = GetClientTeam(playerId);
-        char teamColor[7];
-        teamColor = team == TFTeam_Red ? "\x07FF4040" : "\x0799CCFF";
-        
-        PrintToChatAll("%d. %s%s\x01 - %d frags", i + 1, teamColor, playerName, playerScores[i]);
-    }
+	// Create arrays to store player info
+	int playerIds[MAXPLAYERS + 1];
+	int playerScores[MAXPLAYERS + 1];
+	int playerCount = 0;
+	
+	// Collect valid players and their scores
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if (IsValidClient(i))
+		{
+			playerIds[playerCount] = i;
+			playerScores[playerCount] = g_PlayerFrags[i];
+			playerCount++;
+		}
+	}
+	
+	// Bubble sort
+	for (int i = 0; i < playerCount - 1; i++)
+	{
+		for (int j = 0; j < playerCount - i - 1; j++)
+		{
+			if (playerScores[j] < playerScores[j + 1])
+			{
+				int tempScore = playerScores[j];
+				playerScores[j] = playerScores[j + 1];
+				playerScores[j + 1] = tempScore;
+				
+				int tempId = playerIds[j];
+				playerIds[j] = playerIds[j + 1];
+				playerIds[j + 1] = tempId;
+			}
+		}
+	}
+	
+	PrintToChatAll("\x04[FragLimit]\x01 Top 5 Players this round:");
+	
+	int displayCount = playerCount > 5 ? 5 : playerCount;
+	for (int i = 0; i < displayCount; i++)
+	{
+		char playerName[64];
+		int playerId = playerIds[i];
+		GetClientName(playerId, playerName, sizeof(playerName));
+		
+		int playerTeam = GetClientTeam(playerId);
+		char teamColor[32]; // Using playerTeam instead of undefined 'team'
+		if (playerTeam == TFTeam_Red)
+			strcopy(teamColor, sizeof(teamColor), "\x07FF3D3D");
+		else
+			strcopy(teamColor, sizeof(teamColor), "\x074D7942");
+		
+		PrintToChatAll("%d. %s%s\x01 - %d frags", i + 1, teamColor, playerName, playerScores[i]);
+	}
 }
 
 // And update the sort function to match the correct signature
 public int SortPlayersByFrags(int index1, int index2, Handle array, Handle hndl)
 {
-    ArrayList arrayList = view_as<ArrayList>(array);
-    
-    int[] player1 = new int[2];
-    int[] player2 = new int[2];
-    
-    arrayList.GetArray(index1, player1, 2);
-    arrayList.GetArray(index2, player2, 2);
-    
-    if (player1[1] > player2[1]) return -1;
-    if (player1[1] < player2[1]) return 1;
-    return 0;
+	ArrayList arrayList = view_as<ArrayList>(array);
+	
+	int[] player1 = new int[2];
+	int[] player2 = new int[2];
+	
+	arrayList.GetArray(index1, player1, 2);
+	arrayList.GetArray(index2, player2, 2);
+	
+	if (player1[1] > player2[1])return -1;
+	if (player1[1] < player2[1])return 1;
+	return 0;
 }
 
-// Modify your EndRound function to include the top players display
 void EndRound(int winningTeam)
 {
 	// Display top players before ending the round
 	DisplayTopPlayers();
 	
 	int gameRules = FindEntityByClassname(-1, "tf_gamerules");
-	if (gameRules == -1)return;
+	if (gameRules == -1)
+		return;
 	
+	// Set the winning team
 	SetEntProp(gameRules, Prop_Send, "m_iWinningTeam", winningTeam);
+	SetEntProp(gameRules, Prop_Send, "m_bInWaitingForPlayers", false);
 	
-	Event roundWin = CreateEvent("teamplay_round_win", true);
+	// Create and fire the round win event
+	Event roundWin = CreateEvent("teamplay_round_win");
 	if (roundWin != null)
 	{
 		roundWin.SetInt("team", winningTeam);
@@ -391,7 +352,22 @@ void EndRound(int winningTeam)
 		roundWin.Fire();
 	}
 	
+	// Force round end through game rules
+	SetEntProp(gameRules, Prop_Send, "m_iRoundState", 4); // RoundState_TeamWin
+	
+	// Create timer to restart round
 	CreateTimer(3.0, Timer_RestartRound);
+}
+
+bool ValidateWinCondition(int attackerTeam, int fragLimit)
+{
+	// Check if team has reached limit and the other team hasn't surpassed it
+	if (g_TeamFrags[attackerTeam] >= fragLimit)
+	{
+		int otherTeam = (attackerTeam == TFTeam_Red) ? TFTeam_Blue : TFTeam_Red;
+		return g_TeamFrags[otherTeam] < g_TeamFrags[attackerTeam];
+	}
+	return false;
 }
 
 public Action Timer_RestartRound(Handle timer)
