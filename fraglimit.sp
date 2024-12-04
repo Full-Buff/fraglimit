@@ -46,6 +46,9 @@ ConVar g_CvarFragLimit;
 int g_PlayerFrags[MAXPLAYERS + 1];
 int g_TeamFrags[4];
 bool g_PluginEnabled;
+ConVar g_CvarTournament;
+bool g_RoundActive;
+bool g_RoundEnding = false;
 
 // HUD related variables
 Handle g_HudSync;
@@ -61,7 +64,7 @@ ConVar g_CvarHudBlinkOnClose;
 
 public void OnPluginStart()
 {
-	// Get the existing mp_fraglimit ConVar
+	// Using Find to utilize already existing convar. In case valve actually uses it at some point, it will remain compatible
 	g_CvarFragLimit = FindConVar("mp_fraglimit");
 	if (g_CvarFragLimit == null)
 	{
@@ -103,6 +106,16 @@ public void OnPluginStart()
 	RegAdminCmd("sm_fragstatus", Command_FragStatus, ADMFLAG_GENERIC, "Shows current frag counts");
 	
 	AutoExecConfig(true, "fraglimit");
+	
+	// Checking for tournament mode to only count in-round kills
+	g_CvarTournament = FindConVar("mp_tournament");
+	
+	// Hook the tournament-specific events
+	HookEvent("tournament_stateupdate", OnTournamentStateChange);
+	HookEvent("teamplay_round_active", OnRoundActive);
+	HookEvent("teamplay_round_start", OnRoundStart);
+	HookEvent("teamplay_round_win", OnRoundEnd);
+	HookEvent("teamplay_game_over", OnGameEnd);
 }
 
 public void OnMapStart()
@@ -140,9 +153,49 @@ public Action Command_FragStatus(int client, int args)
 	return Plugin_Handled;
 }
 
+public void OnTournamentStateChange(Event event, const char[] name, bool dontBroadcast)
+{
+	if (!g_CvarTournament.BoolValue)
+		return;
+	
+	int state = event.GetInt("gamestate");
+	if (state == 0) // Between rounds or pregame
+	{
+		g_RoundActive = false;
+		ResetScores();
+	}
+}
+
+public void OnRoundActive(Event event, const char[] name, bool dontBroadcast)
+{
+	if (g_CvarTournament.BoolValue)
+	{
+		g_RoundActive = true;
+	}
+}
+
+public void OnRoundEnd(Event event, const char[] name, bool dontBroadcast)
+{
+	g_RoundActive = false;
+	g_RoundEnding = true; // Set this so we don't count kills during end sequence
+}
+
 public void OnRoundStart(Event event, const char[] name, bool dontBroadcast)
 {
-	ResetScores();
+	g_RoundEnding = false; // Reset this on round start
+	
+	if (!g_CvarTournament.BoolValue)
+	{
+		// In non-tournament mode, just reset scores
+		ResetScores();
+		g_RoundActive = true;
+	}
+	else
+	{
+		// In tournament mode, reset scores but wait for round_active
+		ResetScores();
+		g_RoundActive = false;
+	}
 }
 
 public void OnGameEnd(Event event, const char[] name, bool dontBroadcast)
@@ -152,7 +205,14 @@ public void OnGameEnd(Event event, const char[] name, bool dontBroadcast)
 
 public void OnPlayerDeathEvent(Event event, const char[] name, bool dontBroadcast)
 {
-	if (!g_PluginEnabled)return;
+	if (!g_PluginEnabled)
+		return;
+	
+	// Don't count kills if:
+	// - Tournament mode is on and round isn't active
+	// - Round is in ending sequence
+	if (g_RoundEnding || (g_CvarTournament.BoolValue && !g_RoundActive))
+		return;
 	
 	int victim = GetClientOfUserId(GetEventInt(event, "userid"));
 	int attacker = GetClientOfUserId(GetEventInt(event, "attacker"));
@@ -332,63 +392,64 @@ public int SortPlayersByFrags(int index1, int index2, Handle array, Handle hndl)
 // Add these stock functions at the bottom of the file with the other utility functions
 stock int FindEntityByClassname2(int startEnt, const char[] classname)
 {
-    /* If startEnt isn't valid shifting it back to the nearest valid one */
-    while (startEnt > -1 && !IsValidEntity(startEnt)) startEnt--;
-    return FindEntityByClassname(startEnt, classname);
+	/* If startEnt isn't valid shifting it back to the nearest valid one */
+	while (startEnt > -1 && !IsValidEntity(startEnt))startEnt--;
+	return FindEntityByClassname(startEnt, classname);
 }
 
 stock void RoundWin(int team)
 {
-    int ent = -1;
-    if (team != view_as<int>(TFTeam_Unassigned) && team != view_as<int>(TFTeam_Spectator))
-    {
-        while ((ent = FindEntityByClassname2(ent, "game_round_win")) != -1)
-        {
-            if (!IsValidEntity(ent))
-                continue;
-                
-            int roundTeam = GetEntProp(ent, Prop_Data, "m_iTeamNum");
-            if (team == roundTeam)
-            {
-                AcceptEntityInput(ent, "RoundWin");
-                return;
-            }
-        }
-    }
-    
-    // Since we didn't return yet, we didn't find a game_round_win for that team.
-    ent = FindEntityByClassname2(-1, "team_control_point_master");
-    
-    if (ent == -1 || !IsValidEntity(ent))
-    {
-        // No team_control_point_master either... lets create one.
-        ent = CreateEntityByName("team_control_point_master");
-        if (ent != -1)
-        {
-            DispatchKeyValue(ent, "targetname", "master_control_point");
-            DispatchKeyValue(ent, "StartDisabled", "0");
-            DispatchSpawn(ent);
-        }
-    }
-    
-    if (ent != -1)
-    {
-        SetVariantInt(team);
-        AcceptEntityInput(ent, "SetWinner");
-    }
+	int ent = -1;
+	if (team != view_as<int>(TFTeam_Unassigned) && team != view_as<int>(TFTeam_Spectator))
+	{
+		while ((ent = FindEntityByClassname2(ent, "game_round_win")) != -1)
+		{
+			if (!IsValidEntity(ent))
+				continue;
+			
+			int roundTeam = GetEntProp(ent, Prop_Data, "m_iTeamNum");
+			if (team == roundTeam)
+			{
+				AcceptEntityInput(ent, "RoundWin");
+				return;
+			}
+		}
+	}
+	
+	// Since we didn't return yet, we didn't find a game_round_win for that team.
+	ent = FindEntityByClassname2(-1, "team_control_point_master");
+	
+	if (ent == -1 || !IsValidEntity(ent))
+	{
+		// No team_control_point_master either... lets create one.
+		ent = CreateEntityByName("team_control_point_master");
+		if (ent != -1)
+		{
+			DispatchKeyValue(ent, "targetname", "master_control_point");
+			DispatchKeyValue(ent, "StartDisabled", "0");
+			DispatchSpawn(ent);
+		}
+	}
+	
+	if (ent != -1)
+	{
+		SetVariantInt(team);
+		AcceptEntityInput(ent, "SetWinner");
+	}
 }
 
-// Then replace the EndRound function with this new version
 void EndRound(int winningTeam)
 {
-    // Display top players before ending the round
-    DisplayTopPlayers();
-    
-    // Convert from TFTeam enum to actual team numbers used by the game
-    int gameTeam = (winningTeam == view_as<int>(TFTeam_Red)) ? 2 : 3;
-    
-    // Try to end the round using the game_round_win entity method
-    RoundWin(gameTeam);
+	g_RoundEnding = true; // Set this before we start the end sequence
+	
+	// Display top players before ending the round
+	DisplayTopPlayers();
+	
+	// Convert from TFTeam enum to actual team numbers used by the game
+	int gameTeam = (winningTeam == view_as<int>(TFTeam_Red)) ? 2 : 3;
+	
+	// Try to end the round using the game_round_win entity method
+	RoundWin(gameTeam);
 }
 
 bool ValidateWinCondition(int attackerTeam, int fragLimit)
