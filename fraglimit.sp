@@ -329,34 +329,66 @@ public int SortPlayersByFrags(int index1, int index2, Handle array, Handle hndl)
 	return 0;
 }
 
+// Add these stock functions at the bottom of the file with the other utility functions
+stock int FindEntityByClassname2(int startEnt, const char[] classname)
+{
+    /* If startEnt isn't valid shifting it back to the nearest valid one */
+    while (startEnt > -1 && !IsValidEntity(startEnt)) startEnt--;
+    return FindEntityByClassname(startEnt, classname);
+}
+
+stock void RoundWin(int team)
+{
+    int ent = -1;
+    if (team != view_as<int>(TFTeam_Unassigned) && team != view_as<int>(TFTeam_Spectator))
+    {
+        while ((ent = FindEntityByClassname2(ent, "game_round_win")) != -1)
+        {
+            if (!IsValidEntity(ent))
+                continue;
+                
+            int roundTeam = GetEntProp(ent, Prop_Data, "m_iTeamNum");
+            if (team == roundTeam)
+            {
+                AcceptEntityInput(ent, "RoundWin");
+                return;
+            }
+        }
+    }
+    
+    // Since we didn't return yet, we didn't find a game_round_win for that team.
+    ent = FindEntityByClassname2(-1, "team_control_point_master");
+    
+    if (ent == -1 || !IsValidEntity(ent))
+    {
+        // No team_control_point_master either... lets create one.
+        ent = CreateEntityByName("team_control_point_master");
+        if (ent != -1)
+        {
+            DispatchKeyValue(ent, "targetname", "master_control_point");
+            DispatchKeyValue(ent, "StartDisabled", "0");
+            DispatchSpawn(ent);
+        }
+    }
+    
+    if (ent != -1)
+    {
+        SetVariantInt(team);
+        AcceptEntityInput(ent, "SetWinner");
+    }
+}
+
+// Then replace the EndRound function with this new version
 void EndRound(int winningTeam)
 {
-	// Display top players before ending the round
-	DisplayTopPlayers();
-	
-	int gameRules = FindEntityByClassname(-1, "tf_gamerules");
-	if (gameRules == -1)
-		return;
-	
-	// Set the winning team
-	SetEntProp(gameRules, Prop_Send, "m_iWinningTeam", winningTeam);
-	SetEntProp(gameRules, Prop_Send, "m_bInWaitingForPlayers", false);
-	
-	// Create and fire the round win event
-	Event roundWin = CreateEvent("teamplay_round_win");
-	if (roundWin != null)
-	{
-		roundWin.SetInt("team", winningTeam);
-		roundWin.SetInt("winreason", view_as<int>(TFWinReason_PointLimit));
-		roundWin.SetBool("full_round", true);
-		roundWin.Fire();
-	}
-	
-	// Force round end through game rules
-	SetEntProp(gameRules, Prop_Send, "m_iRoundState", 4); // RoundState_TeamWin
-	
-	// Create timer to restart round
-	CreateTimer(3.0, Timer_RestartRound);
+    // Display top players before ending the round
+    DisplayTopPlayers();
+    
+    // Convert from TFTeam enum to actual team numbers used by the game
+    int gameTeam = (winningTeam == view_as<int>(TFTeam_Red)) ? 2 : 3;
+    
+    // Try to end the round using the game_round_win entity method
+    RoundWin(gameTeam);
 }
 
 bool ValidateWinCondition(int attackerTeam, int fragLimit)
