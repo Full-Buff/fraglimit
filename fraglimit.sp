@@ -38,7 +38,7 @@ public Plugin myinfo =  {
 	author = "Fuko.dev", 
 	description = "Extends mp_fraglimit functionality to all game modes.", 
 	version = "1.0", 
-	url = ""
+	url = "https://github.com/Full-Buff/fraglimit"
 };
 
 // Core plugin variables
